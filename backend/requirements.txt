@@ -1,0 +1,18 @@
+livekit
+livekit-agents
+livekit-api
+# Optional: AI noise cancellation for the voice worker.
+# The worker now runs without it if missing, but install for best quality:
+# livekit-plugins-noise-cancellation
+python-dotenv
+fastapi
+uvicorn
+pydantic
+pydantic-settings
+sqlalchemy
+asyncpg
+redis
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart
+websockets
