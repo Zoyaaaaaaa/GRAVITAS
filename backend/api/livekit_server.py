@@ -33,6 +33,18 @@ except ImportError:
         "Install with: pip install livekit-plugins-noise-cancellation"
     )
 try:
+    from livekit.plugins import google as google_plugin
+    GOOGLE_PLUGIN_AVAILABLE = True
+except ImportError:
+    google_plugin = None
+    GOOGLE_PLUGIN_AVAILABLE = False
+    logger = logging.getLogger("gravitas-voice")
+    logger.warning(
+        "livekit-plugins-google not installed — LLM falls back to the "
+        "LiveKit inference gateway (quota-limited). "
+        "Install with: pip install livekit-plugins-google"
+    )
+try:
     from ..core.config import settings
 except ImportError:
     # Fallback for standalone execution
@@ -43,7 +55,19 @@ except ImportError:
         livekit_url = os.getenv("LIVEKIT_URL", "")
         livekit_api_key = os.getenv("LIVEKIT_API_KEY", "")
         livekit_api_secret = os.getenv("LIVEKIT_API_SECRET", "")
+        google_api_key = os.getenv("GOOGLE_API_KEY", "")
     settings = Settings()
+
+
+def build_llm():
+    """Direct Gemini LLM (no gateway quota) with gateway fallback."""
+    import os as _os
+    key = getattr(settings, "google_api_key", "") or _os.getenv("GOOGLE_API_KEY", "")
+    if GOOGLE_PLUGIN_AVAILABLE and key:
+        logger.info("Voice LLM: direct Google Gemini (gemini-2.5-flash)")
+        return google_plugin.LLM(model="gemini-2.5-flash", api_key=key)
+    logger.warning("Voice LLM: LiveKit inference gateway (quota-limited)")
+    return inference.LLM(model="google/gemma-4-31b-it")
 try:
     from ..orchestrator.orchestrator import Orchestrator
     from ..scenarios.scenario_engine import ScenarioEngine
@@ -349,9 +373,7 @@ async def entrypoint(ctx: JobContext):
     session = AgentSession(
         stt=inference.STT(model="deepgram/nova-3", language="en"),
         stt_context_options={"keyterm_detection": {"enabled": True}},
-        llm=inference.LLM(
-            model="google/gemma-4-31b-it",
-        ),
+        llm=build_llm(),
         tts=inference.TTS(
             model="cartesia/sonic-3",
             voice="9626c31c-bec5-4cca-baa8-f8ba9e84c8bc",

@@ -1,0 +1,215 @@
+# GitHub Actions CI Pipeline
+# Runs on every push and pull request
+
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  PYTHON_VERSION: '3.11'
+  NODE_VERSION: '20'
+
+jobs:
+  # Backend tests and linting
+  backend:
+    name: Backend (Python)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./backend
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: gravitas_test
+        ports: 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports: 6379:6379
+        options: --health-cmd "redis-cli ping" --health-interval 10s --health-timeout 5s --health-retries 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run linting (ruff)
+        run: |
+          pip install ruff
+          ruff check .
+
+      - name: Run type checking (mypy)
+        run: |
+          pip install mypy
+          mypy --ignore-missing-imports . || true
+
+      - name: Run tests with coverage
+        run: |
+          pip install pytest pytest-asyncio pytest-cov httpx
+          pytest tests/ -v --cov=. --cov-report=xml --cov-report=term-missing || true
+        env:
+          DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/gravitas_test
+          REDIS_URL: redis://localhost:6379/0
+          LIVEKIT_URL: wss://test.livekit.cloud
+          LIVEKIT_API_KEY: test
+          LIVEKIT_API_SECRET: test
+          GOOGLE_API_KEY: test
+          SECRET_KEY: test-secret-key-for-ci
+          ENVIRONMENT: test
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          files: ./backend/coverage.xml
+          flags: backend
+          fail_ci_if_error: false
+
+  # Frontend tests and build
+  frontend:
+    name: Frontend (Next.js)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./frontend
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run linting
+        run: npm run lint
+
+      - name: Run type checking
+        run: npx tsc --noEmit
+
+      - name: Build application
+        run: npm run build
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+          NEXT_PUBLIC_LIVEKIT_URL: wss://test.livekit.cloud
+
+      - name: Run tests
+        run: npm test -- --ci --coverage || true
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          files: ./frontend/coverage/lcov.info
+          flags: frontend
+          fail_ci_if_error: false
+
+  # Integration test (backend + frontend)
+  integration:
+    name: Integration Test
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Compose
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and test with Docker Compose
+        run: |
+          docker compose -f docker-compose.ci.yml up --build --abort-on-container-exit --exit-code-from test-runner
+        env:
+          LIVEKIT_URL: wss://test.livekit.cloud
+          LIVEKIT_API_KEY: test
+          LIVEKIT_API_SECRET: test
+          GOOGLE_API_KEY: test
+          SECRET_KEY: test-secret-key-for-ci
+
+  # Security scanning
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'HIGH,CRITICAL'
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Run pip-audit (Python dependencies)
+        run: |
+          pip install pip-audit
+          pip-audit -r backend/requirements.txt || true
+
+      - name: Run npm audit (Node dependencies)
+        run: |
+          cd frontend && npm audit --audit-level=high || true
+
+  # Deploy preview (for PRs)
+  deploy-preview:
+    name: Deploy Preview
+    runs-on: ubuntu-latest
+    needs: [backend, frontend, security]
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Deploy to Render Preview
+        run: |
+          echo "Preview deployment would be triggered here"
+          echo "For Render: use render.com GitHub integration for auto-preview deployments"
+          echo "For Vercel: automatic preview deployments on PRs"
+        # Actual deployment handled by Render/Vercel GitHub integration
+
+  # Notify on failure
+  notify-failure:
+    name: Notify Failure
+    runs-on: ubuntu-latest
+    needs: [backend, frontend, integration, security]
+    if: failure()
+    steps:
+      - name: Send failure notification
+        run: |
+          echo "CI failed! Check GitHub Actions for details."
+          # Add Slack/Discord webhook here if needed

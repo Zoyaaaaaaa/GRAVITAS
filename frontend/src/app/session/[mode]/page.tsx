@@ -4,8 +4,10 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import VoiceInterface, { TranscriptMsg } from '@/components/VoiceInterface';
+import BrowserVoice from '@/components/BrowserVoice';
 import { Mode } from '@/types';
-import { ArrowLeft, Clock, Target, ScrollText, Sparkles, SendHorizonal, Crown } from 'lucide-react';
+import { getUserId, loadSession, saveSession, clearSession, loadProfile, saveProfile, PersistedProfile } from '@/utils/sessionStore';
+import { ArrowLeft, Clock, Target, ScrollText, Sparkles, SendHorizonal, Crown, User, RotateCcw, History, Headphones } from 'lucide-react';
 
 interface SessionPageProps {
   params: {
@@ -82,73 +84,210 @@ export default function SessionPage({ params }: SessionPageProps) {
   const [sending, setSending] = useState(false);
   const [brief, setBrief] = useState<SessionBrief>({ objective: meta.brief, context: '', opening: '', focus: meta.focus, ready: false });
   const [voiceState, setVoiceState] = useState<'connecting' | 'live' | 'offline'>('connecting');
+  const [resumed, setResumed] = useState(false);
+  const [profile, setProfile] = useState<PersistedProfile | null>(null);
+  // Quota-free fallback when the LiveKit inference gateway is 429-limited
+  const [fallbackOn, setFallbackOn] = useState(false);
+  const [showFallbackHint, setShowFallbackHint] = useState(false);
+  const spokenRef = useRef<Set<string>>(new Set());
+  const [, forceSpeakTick] = useState(0);
 
-  const userIdRef = useRef(`web-user-${Date.now()}`);
+  const userIdRef = useRef<string>('');
   const restSessionIdRef = useRef<string | null>(null);
   const seenSegmentsRef = useRef<Set<string>>(new Set());
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const bootstrappedRef = useRef(false);
 
-  // Session timer
+  // Stable identity — same user across reloads so history resumes
+  if (!userIdRef.current && typeof window !== 'undefined') {
+    userIdRef.current = getUserId();
+  }
+
+  // Session timer (persists so a return visit continues the clock)
   useEffect(() => {
     const interval = setInterval(() => setCurrentTime((p) => p + 1), 1000);
     return () => clearInterval(interval);
   }, []);
+
+  // Persist progress continuously (reload / logout / crash-safe)
+  useEffect(() => {
+    if (!bootstrappedRef.current) return;
+    if (messages.length === 0) return;
+    saveSession({
+      mode,
+      restSessionId: restSessionIdRef.current,
+      messages: messages.map((m) => ({ id: m.id, role: m.role, text: m.text, ts: m.ts.toISOString() })),
+      brief: { ...brief },
+      elapsed: currentTime,
+      status: isSessionActive ? 'active' : 'ended',
+    });
+  }, [messages, brief, mode, isSessionActive]);
+
+  // Timer checkpoint every 15s + on tab hide
+  useEffect(() => {
+    const checkpoint = () => {
+      if (!bootstrappedRef.current || messages.length === 0) return;
+      saveSession({
+        mode,
+        restSessionId: restSessionIdRef.current,
+        messages: messages.map((m) => ({ id: m.id, role: m.role, text: m.text, ts: m.ts.toISOString() })),
+        brief: { ...brief },
+        elapsed: currentTime,
+        status: isSessionActive ? 'active' : 'ended',
+      });
+    };
+    const id = setInterval(checkpoint, 15000);
+    const onHide = () => { if (document.visibilityState === 'hidden') checkpoint(); };
+    document.addEventListener('visibilitychange', onHide);
+    window.addEventListener('beforeunload', checkpoint);
+    return () => { clearInterval(id); document.removeEventListener('visibilitychange', onHide); window.removeEventListener('beforeunload', checkpoint); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentTime, messages, brief, mode, isSessionActive]);
 
   // Auto-scroll conversation
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages, interim]);
 
-  // Greet immediately so the screen is never empty, then prepare full briefing.
+  // Boot: resume previous state if it exists, else greet + prepare briefing.
+  // Verifies the stored REST session; keeps the transcript either way.
   useEffect(() => {
-    const greet: ChatMessage = {
-      id: nextId(),
-      role: 'agent',
-      text: `Good evening — welcome to your ${meta.title} session. I am Gravitas, your coach. Speak whenever you're ready; I'm connecting your voice now and preparing today's scenario.`,
-      ts: new Date(),
-    };
-    setMessages([greet]);
-    setInterim({ role: 'agent', text: 'Preparing your session…' });
+    if (bootstrappedRef.current) return;
+    bootstrappedRef.current = true;
 
-    let cancelled = false;
-    (async () => {
+    const cachedProfile = loadProfile();
+    if (cachedProfile) setProfile(cachedProfile);
+
+    const saved = loadSession(mode);
+    if (saved && saved.messages.length > 0) {
+      setMessages(saved.messages.map((m) => ({ id: m.id, role: m.role, text: m.text, ts: new Date(m.ts) })));
+      if (saved.brief) setBrief(saved.brief);
+      setCurrentTime(saved.elapsed || 0);
+      restSessionIdRef.current = saved.restSessionId;
+      setResumed(true);
+      if (saved.status === 'ended') {
+        // Keep the transcript, but revive live coaching so mic + agent
+        // work immediately; the user can still start fresh from the rail.
+        setIsSessionActive(true);
+        setTimeout(() => {
+          setMessages((prev) => [...prev, { id: nextId(), role: 'agent', text: `This session had ended — I've reopened live coaching so we can keep going from where we left off.`, ts: new Date() }]);
+        }, 1200);
+      }
+      setTimeout(() => {
+        setMessages((prev) => [...prev, { id: nextId(), role: 'agent', text: `Welcome back — I've kept everything from where we left off in ${meta.title}. ${saved.messages.length} exchanges preserved. Speak whenever you're ready, and we'll continue.`, ts: new Date() }]);
+      }, 600);
+    } else {
+      const greet: ChatMessage = {
+        id: nextId(),
+        role: 'agent',
+        text: `Good evening — welcome to your ${meta.title} session. I am Gravitas, your coach. Speak whenever you're ready; I'm connecting your voice now and preparing today's scenario.`,
+        ts: new Date(),
+      };
+      setMessages([greet]);
+      setInterim({ role: 'agent', text: 'Preparing your session…' });
+    }
+
+    // Note: no `cancelled` flag here on purpose. React 18 StrictMode runs
+    // effects as mount → cleanup → re-run in dev; a cancelled flag would
+    // orphan this run (bootstrappedRef blocks the second) and leave the
+    // "Preparing…" indicator stuck forever. setState after unmount is a
+    // safe no-op in React 18.
+    const fetchJson = async (url: string, init?: RequestInit, timeoutMs = 12000) => {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), timeoutMs);
       try {
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+        const res = await fetch(url, { ...init, signal: ctrl.signal });
+        return res;
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+    (async () => {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+      const userId = userIdRef.current || getUserId();
+      userIdRef.current = userId;
+
+      // Profile (cached first, refreshed quietly)
+      try {
+        if (apiUrl) {
+          const [profRes, weakRes] = await Promise.all([
+            fetchJson(`${apiUrl}/user/${encodeURIComponent(userId)}/profile`),
+            fetchJson(`${apiUrl}/user/${encodeURIComponent(userId)}/weaknesses`),
+          ]);
+          if (profRes.ok || weakRes.ok) {
+            const prev = loadProfile();
+            const totalSessions = prev?.totalSessions ?? 0;
+            const totalMinutes = prev?.totalMinutes ?? 0;
+            let strengths: string[] = prev?.strengths ?? [];
+            let focusNext: string[] = meta.focus;
+            if (weakRes.ok) {
+              try {
+                const w = await weakRes.json();
+                if (Array.isArray(w.weaknesses) && w.weaknesses.length > 0) {
+                  focusNext = w.weaknesses.slice(0, 3).map((x: { skill?: string; category?: string }) =>
+                    String(x.skill ?? x.category ?? '').replace(/_/g, ' ')).filter(Boolean);
+                }
+              } catch { /* keep defaults */ }
+            }
+            const next: PersistedProfile = {
+              displayName: prev?.displayName ?? 'Member',
+              level: totalSessions >= 10 ? 'Principal' : totalSessions >= 4 ? 'Senior' : 'Rising',
+              totalSessions, totalMinutes, strengths, focusNext,
+              updatedAt: Date.now(),
+            };
+            setProfile(next);
+            saveProfile(next);
+          }
+        }
+      } catch { /* profile is enhancement-only */ }
+
+      // REST session: verify stored one, else start fresh (transcript preserved)
+      try {
         const backendMode = toBackendMode(mode);
         if (!apiUrl || !backendMode) {
-          if (!cancelled) setInterim(null);
+          setBrief((b) => ({ ...b, ready: true })); setInterim(null);
           return;
         }
-        const userId = userIdRef.current;
-        const startRes = await fetch(`${apiUrl}/session/start?user_id=${encodeURIComponent(userId)}&mode=${encodeURIComponent(backendMode)}`, { method: 'POST' });
-        if (!startRes.ok) throw new Error(`start: ${startRes.status}`);
-        const startData = await startRes.json();
-        restSessionIdRef.current = startData.session_id;
+        let sid = restSessionIdRef.current;
+        if (sid) {
+          try {
+            const check = await fetchJson(`${apiUrl}/session/${encodeURIComponent(sid)}`, undefined, 8000);
+            if (!check.ok) sid = null;
+          } catch { sid = null; }
+        }
+        if (!sid) {
+          const startRes = await fetchJson(`${apiUrl}/session/start?user_id=${encodeURIComponent(userId)}&mode=${encodeURIComponent(backendMode)}`, { method: 'POST' });
+          if (!startRes.ok) throw new Error(`start: ${startRes.status}`);
+          const startData = await startRes.json();
+          sid = startData.session_id;
+          restSessionIdRef.current = sid;
 
-        const scRes = await fetch(`${apiUrl}/session/${startData.session_id}/scenario`, { method: 'POST' });
-        if (!scRes.ok) throw new Error(`scenario: ${scRes.status}`);
-        const sc = await scRes.json();
-        if (cancelled) return;
-        setBrief({
-          objective: sc.context || meta.brief,
-          context: sc.context || '',
-          opening: sc.opening_move || '',
-          focus: meta.focus,
-          ready: true,
-        });
-        setInterim(null);
-        if (sc.opening_move) {
-          setMessages((prev) => [...prev, { id: nextId(), role: 'agent', text: sc.opening_move, ts: new Date() }]);
+          const scRes = await fetchJson(`${apiUrl}/session/${sid}/scenario`, { method: 'POST' });
+          if (!scRes.ok) throw new Error(`scenario: ${scRes.status}`);
+          const sc = await scRes.json();
+          setBrief({
+            objective: sc.context || meta.brief,
+            context: sc.context || '',
+            opening: sc.opening_move || '',
+            focus: meta.focus,
+            ready: true,
+          });
+          setInterim(null);
+          // Only speak the opening for brand-new sessions, never over a resume
+          if (sc.opening_move && !saved) {
+            setMessages((prev) => [...prev, { id: nextId(), role: 'agent', text: sc.opening_move, ts: new Date() }]);
+          }
+        } else {
+          restSessionIdRef.current = sid;
+          setBrief((b) => ({ ...b, ready: true })); setInterim(null);
         }
       } catch (e) {
         console.warn('Session briefing unavailable, voice continues:', e);
-        if (!cancelled) {
-          setBrief((b) => ({ ...b, ready: true }));
-          setInterim(null);
-        }
+        setBrief((b) => ({ ...b, ready: true }));
+        setInterim(null);
       }
     })();
-    return () => { cancelled = true; };
+    // No cleanup flag — see note above (StrictMode-safe by design).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
 
@@ -181,10 +320,26 @@ export default function SessionPage({ params }: SessionPageProps) {
   const handleEndSession = useCallback(() => {
     setIsSessionActive(false);
     setInterim(null);
-  }, []);
+    setProfile((prev) => {
+      const base: PersistedProfile = prev ?? { displayName: 'Member', level: 'Rising', totalSessions: 0, totalMinutes: 0, strengths: [], focusNext: meta.focus, updatedAt: Date.now() };
+      const next: PersistedProfile = {
+        ...base,
+        totalSessions: base.totalSessions + 1,
+        totalMinutes: base.totalMinutes + Math.round(currentTime / 60),
+        level: base.totalSessions + 1 >= 10 ? 'Principal' : base.totalSessions + 1 >= 4 ? 'Senior' : 'Rising',
+      };
+      saveProfile(next);
+      return next;
+    });
+  }, [currentTime, meta.focus]);
 
-  const sendComposer = useCallback(async () => {
-    const text = composer.trim();
+  const handleFreshStart = useCallback(() => {
+    clearSession(mode);
+    window.location.reload();
+  }, [mode]);
+
+  const sendText = useCallback(async (raw: string) => {
+    const text = raw.trim();
     if (!text || sending) return;
     setComposer('');
     appendMessage('user', text);
@@ -203,7 +358,33 @@ export default function SessionPage({ params }: SessionPageProps) {
     } finally {
       setSending(false);
     }
-  }, [composer, sending, appendMessage]);
+  }, [sending, appendMessage]);
+
+  const sendComposer = useCallback(async () => {
+    await sendText(composer);
+  }, [composer, sendText]);
+
+  // Suggest the quota-free fallback if the LiveKit agent stays silent
+  const voiceStateRef = useRef(voiceState);
+  voiceStateRef.current = voiceState;
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (voiceStateRef.current !== 'live') setShowFallbackHint(true);
+    }, 25000);
+    return () => clearTimeout(t);
+  }, []);
+
+  // Latest unspoken agent message → vocalized once by the fallback
+  const pendingSpeak = (() => {
+    if (!fallbackOn) return null;
+    const last = [...messages].reverse().find((m) => m.role === 'agent' && !spokenRef.current.has(m.id));
+    return last ? { id: last.id, text: last.text } : null;
+  })();
+
+  const handleSpoken = useCallback((id: string) => {
+    spokenRef.current.add(id);
+    forceSpeakTick((t) => t + 1);
+  }, []);
 
   return (
     <div className="min-h-screen relative overflow-hidden bg-[#0B0B0F] text-[#F5F1E8]">
@@ -228,6 +409,11 @@ export default function SessionPage({ params }: SessionPageProps) {
           <div className="text-center">
             <p className="text-[11px] tracking-[0.35em] uppercase text-[#C9A96A]">Gravitas · Private Coaching</p>
             <h1 className="font-serif text-3xl md:text-4xl mt-1 text-[#F5F1E8]">{meta.title}</h1>
+            {resumed && (
+              <p className="inline-flex items-center gap-1.5 mt-2 text-[11px] tracking-[0.25em] uppercase text-[#E8D9B8]/80 border border-[#C9A96A]/30 rounded-full px-3 py-1">
+                <History className="w-3.5 h-3.5" /> Resumed · continues where you left off
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-2 text-sm text-white/60 tabular-nums">
             <span className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs tracking-widest uppercase ${voiceState === 'live' ? 'border-emerald-300/30 text-emerald-200' : 'border-[#C9A96A]/40 text-[#E8D9B8]'}`}>
@@ -270,6 +456,32 @@ export default function SessionPage({ params }: SessionPageProps) {
             <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
               <div className="flex items-center gap-2 text-[11px] tracking-[0.3em] uppercase text-white/45"><ScrollText className="w-4 h-4 text-[#C9A96A]" /> Etiquette</div>
               <p className="text-sm leading-relaxed text-white/55 mt-3">Speak naturally — your words appear below as live captions. You may also write; your coach replies in kind.</p>
+              <button onClick={handleFreshStart} className="mt-4 inline-flex items-center gap-2 text-[11px] tracking-[0.25em] uppercase text-white/40 hover:text-[#E8D9B8] transition-colors">
+                <RotateCcw className="w-3.5 h-3.5" /> Start fresh
+              </button>
+            </div>
+
+            {/* Profile */}
+            <div className="rounded-2xl border border-[#C9A96A]/25 bg-gradient-to-b from-[#C9A96A]/10 to-transparent p-6">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-full border border-[#C9A96A]/50 bg-[#C9A96A]/15 flex items-center justify-center">
+                  <User className="w-5 h-5 text-[#E8D9B8]" />
+                </div>
+                <div>
+                  <p className="font-serif text-lg text-[#F5F1E8]">{profile?.displayName ?? 'Member'}</p>
+                  <p className="text-[11px] tracking-[0.25em] uppercase text-[#C9A96A]">{profile?.level ?? 'Rising'} · {profile?.totalSessions ?? 0} sessions</p>
+                </div>
+              </div>
+              {profile && profile.focusNext.length > 0 && (
+                <div className="mt-4">
+                  <p className="text-[11px] tracking-[0.3em] uppercase text-white/45">Focus next</p>
+                  <ul className="mt-2 space-y-1.5">
+                    {profile.focusNext.slice(0, 3).map((f) => (
+                      <li key={f} className="text-sm text-white/70 capitalize">· {f}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           </motion.aside>
 
@@ -284,6 +496,20 @@ export default function SessionPage({ params }: SessionPageProps) {
               <div className="flex items-center gap-2 text-[11px] tracking-[0.3em] uppercase text-white/45"><Sparkles className="w-4 h-4 text-[#C9A96A]" /> Conversation</div>
               <div className="text-xs text-white/35 font-serif italic">with your Gravitas coach</div>
             </div>
+
+            {showFallbackHint && !fallbackOn && voiceState !== 'live' && (
+              <div className="mx-6 mt-4 rounded-xl border border-[#C9A96A]/40 bg-[#C9A96A]/10 px-4 py-3 flex items-center gap-3">
+                <Headphones className="w-4 h-4 text-[#E8D9B8] flex-shrink-0" />
+                <p className="text-xs text-white/70 flex-1">Voice service is quiet (cloud quota). You can continue hands-free right now:</p>
+                <button
+                  onClick={() => { setFallbackOn(true); setShowFallbackHint(false); }}
+                  className="text-[11px] tracking-[0.2em] uppercase bg-[#C9A96A] text-[#0B0B0F] rounded-full px-4 py-1.5 hover:bg-[#E8D9B8] transition-colors flex-shrink-0"
+                >
+                  Browser voice
+                </button>
+                <button onClick={() => setShowFallbackHint(false)} className="text-white/40 hover:text-white/70 text-sm flex-shrink-0" aria-label="Dismiss">✕</button>
+              </div>
+            )}
 
             <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-6 space-y-5 min-h-[380px] max-h-[520px] elegant-scroll">
               <AnimatePresence initial={false}>
@@ -342,9 +568,31 @@ export default function SessionPage({ params }: SessionPageProps) {
               )}
             </div>
 
+            {/* Quota-free browser voice strip */}
+            {fallbackOn && (
+              <BrowserVoice
+                active={isSessionActive && fallbackOn}
+                onUserText={(t) => { void sendText(t); }}
+                speak={pendingSpeak}
+                onSpoken={handleSpoken}
+              />
+            )}
+
             {/* Composer */}
             <div className="border-t border-white/10 p-4 bg-black/20">
               <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setFallbackOn((f) => !f)}
+                  title={fallbackOn ? 'Turn off browser voice' : 'Use browser voice (works without cloud quota)'}
+                  aria-label="Toggle browser voice"
+                  className={`w-11 h-11 rounded-full flex items-center justify-center transition-colors flex-shrink-0 ${
+                    fallbackOn
+                      ? 'bg-[#C9A96A] text-[#0B0B0F] hover:bg-[#E8D9B8]'
+                      : 'border border-white/15 text-white/50 hover:text-[#E8D9B8] hover:border-[#C9A96A]/50'
+                  }`}
+                >
+                  <Headphones className="w-5 h-5" />
+                </button>
                 <input
                   value={composer}
                   onChange={(e) => setComposer(e.target.value)}

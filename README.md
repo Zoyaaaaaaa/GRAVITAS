@@ -99,10 +99,9 @@ gravitas/
 7. **Persuasion Lab** - Learn multi-frame communication
 8. **Real-World Scenario** - Simulate authentic professional situations
 9. **Rapid Response** - Train quick thinking under pressure
-10. **Story to Strategy** - Build strategic story banks
-11. **High Pressure** - Handle difficult conversations
-12. **Answer Architect** - Structure perfect answers
-13. **Professional Identity** - Craft coherent professional narratives
+10. **High Pressure** - Handle difficult conversations
+11. **Answer Architect** - Structure perfect answers
+12. **Professional Identity** - Craft coherent professional narratives
 
 ## Setup Instructions
 

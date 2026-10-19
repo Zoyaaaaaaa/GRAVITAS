@@ -1,0 +1,20 @@
+# Dockerfile for Test Runner
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements and install
+COPY backend/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install pytest pytest-asyncio httpx pytest-cov
+
+# Copy test files
+COPY backend/tests/ ./tests/ 2>/dev/null || true
+
+# Default command - override in docker-compose
+CMD ["pytest", "tests/", "-v", "--tb=short"]

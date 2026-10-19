@@ -2,31 +2,29 @@
 
 import { motion } from 'framer-motion';
 import { Mode } from '@/types';
-import { BookOpen, Brain, Scale, Briefcase, Crown, Zap, MessageSquare, Clock, RefreshCw, Building, AlertTriangle, Sparkles, User } from 'lucide-react';
+import { BookOpen, Brain, Scale, Briefcase, Crown, Zap, MessageSquare, Clock, RefreshCw, Building, AlertTriangle, Sparkles, User, History } from 'lucide-react';
 
 interface ModeCardProps {
   mode: Mode;
-  title: string;
-  description: string;
-  icon: React.ReactNode;
   onSelect: (mode: Mode) => void;
   delay: number;
+  progress?: { messages: number; status: 'active' | 'ended' } | null;
 }
 
 const modeIcons: Record<Mode, React.ReactNode> = {
-  storytelling: <BookOpen className="w-8 h-8" />,
-  critical_thinking: <Brain className="w-8 h-8" />,
-  negotiation: <Scale className="w-8 h-8" />,
-  interview: <Briefcase className="w-8 h-8" />,
-  executive_presence: <Crown className="w-8 h-8" />,
-  devils_advocate: <Zap className="w-8 h-8" />,
-  persuasion_lab: <MessageSquare className="w-8 h-8" />,
-  real_world_scenario: <Clock className="w-8 h-8" />,
-  rapid_response: <RefreshCw className="w-8 h-8" />,
-  story_to_strategy: <Building className="w-8 h-8" />,
-  high_pressure: <AlertTriangle className="w-8 h-8" />,
-  answer_architect: <Sparkles className="w-8 h-8" />,
-  professional_identity: <User className="w-8 h-8" />,
+  storytelling: <BookOpen className="w-6 h-6" />,
+  critical_thinking: <Brain className="w-6 h-6" />,
+  negotiation: <Scale className="w-6 h-6" />,
+  interview: <Briefcase className="w-6 h-6" />,
+  executive_presence: <Crown className="w-6 h-6" />,
+  devils_advocate: <Zap className="w-6 h-6" />,
+  persuasion_lab: <MessageSquare className="w-6 h-6" />,
+  real_world_scenario: <Clock className="w-6 h-6" />,
+  rapid_response: <RefreshCw className="w-6 h-6" />,
+  story_to_strategy: <Building className="w-6 h-6" />,
+  high_pressure: <AlertTriangle className="w-6 h-6" />,
+  answer_architect: <Sparkles className="w-6 h-6" />,
+  professional_identity: <User className="w-6 h-6" />,
 };
 
 const modeDescriptions: Record<Mode, string> = {
@@ -61,29 +59,39 @@ const modeTitles: Record<Mode, string> = {
   professional_identity: 'Professional Identity',
 };
 
-export default function ModeCard({ mode, onSelect, delay }: Omit<ModeCardProps, 'title' | 'description' | 'icon'>) {
+export default function ModeCard({ mode, onSelect, delay, progress }: ModeCardProps) {
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20 }}
+      initial={{ opacity: 0, y: 18 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5, delay }}
-      whileHover={{ scale: 1.05, y: -5 }}
-      whileTap={{ scale: 0.95 }}
+      whileHover={{ y: -4 }}
+      whileTap={{ scale: 0.98 }}
       onClick={() => onSelect(mode)}
-      className="mode-card group"
+      className="group cursor-pointer rounded-2xl border border-white/10 bg-white/[0.03] p-6 hover:border-[#C9A96A]/50 hover:bg-[#C9A96A]/[0.06] transition-all duration-300 relative overflow-hidden"
     >
-      <div className="flex flex-col items-center text-center space-y-4">
-        <div className="p-4 rounded-full bg-gradient-to-br from-primary-500/20 to-accent-500/20 group-hover:from-primary-500/40 group-hover:to-accent-500/40 transition-all duration-300">
-          <div className="text-gradient">
-            {modeIcons[mode]}
-          </div>
+      <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-[#C9A96A]/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+      {progress && progress.messages > 0 && (
+        <span className="absolute top-4 right-4 inline-flex items-center gap-1 text-[10px] tracking-[0.2em] uppercase text-[#E8D9B8] border border-[#C9A96A]/40 rounded-full px-2.5 py-1 bg-[#C9A96A]/10">
+          <History className="w-3 h-3" />
+          {progress.status === 'active' ? `Continue · ${progress.messages}` : `${progress.messages} msgs`}
+        </span>
+      )}
+      <div className="flex flex-col items-start space-y-4">
+        <div className="p-3 rounded-xl border border-[#C9A96A]/30 bg-[#C9A96A]/10 text-[#E8D9B8] group-hover:bg-[#C9A96A]/20 transition-colors">
+          {modeIcons[mode]}
         </div>
-        <h3 className="text-xl font-bold text-white group-hover:text-gradient transition-all duration-300">
-          {modeTitles[mode]}
-        </h3>
-        <p className="text-sm text-gray-300 group-hover:text-white transition-all duration-300">
-          {modeDescriptions[mode]}
-        </p>
+        <div>
+          <h3 className="font-serif text-xl text-[#F5F1E8]">
+            {modeTitles[mode]}
+          </h3>
+          <p className="text-sm text-white/50 mt-1.5 leading-relaxed">
+            {modeDescriptions[mode]}
+          </p>
+        </div>
+        <span className="text-[11px] tracking-[0.25em] uppercase text-[#C9A96A] opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all">
+          {progress && progress.messages > 0 ? 'Resume session →' : 'Begin session →'}
+        </span>
       </div>
     </motion.div>
   );

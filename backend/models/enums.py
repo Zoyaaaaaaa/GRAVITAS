@@ -11,7 +11,6 @@ class Mode(str, Enum):
     PERSUASION_LAB = "persuasion_lab"
     REAL_WORLD_SCENARIO = "real_world_scenario"
     RAPID_RESPONSE = "rapid_response"
-    STORY_TO_STRATEGY = "story_to_strategy"
     HIGH_PRESSURE = "high_pressure"
     ANSWER_ARCHITECT = "answer_architect"
     PROFESSIONAL_IDENTITY = "professional_identity"

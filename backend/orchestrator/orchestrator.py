@@ -113,9 +113,20 @@ class Orchestrator:
         if not agent:
             return "Mode not supported"
         
-        # Build context
+        # Build context (agents expect plain dicts, not pydantic models)
+        scenario_state = session.scenario_state
+        if scenario_state is None:
+            scenario_ctx: Dict[str, Any] = {}
+        elif hasattr(scenario_state, "model_dump"):
+            scenario_ctx = scenario_state.model_dump()
+        elif hasattr(scenario_state, "dict"):
+            scenario_ctx = scenario_state.dict()
+        elif isinstance(scenario_state, dict):
+            scenario_ctx = scenario_state
+        else:
+            scenario_ctx = {}
         context = {
-            "scenario": session.scenario_state,
+            "scenario": scenario_ctx,
             "session_id": session.id,
             "user_id": session.user_id
         }
