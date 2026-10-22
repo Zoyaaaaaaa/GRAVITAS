@@ -50,7 +50,7 @@ if settings.secret_key and settings.secret_key != "dev-secret-key":
     sentry_sdk.init(
         dsn=os.getenv("SENTRY_DSN"),
         integrations=[
-            FastApiIntegration(auto_enable=True),
+            FastApiIntegration(),
             AsyncioIntegration(),
         ],
         traces_sample_rate=0.1,
