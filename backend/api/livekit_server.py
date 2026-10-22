@@ -44,19 +44,8 @@ except ImportError:
         "LiveKit inference gateway (quota-limited). "
         "Install with: pip install livekit-plugins-google"
     )
-try:
-    from ..core.config import settings
-except ImportError:
-    # Fallback for standalone execution
-    from dotenv import load_dotenv
-    load_dotenv(".env")
-    import os
-    class Settings:
-        livekit_url = os.getenv("LIVEKIT_URL", "")
-        livekit_api_key = os.getenv("LIVEKIT_API_KEY", "")
-        livekit_api_secret = os.getenv("LIVEKIT_API_SECRET", "")
-        google_api_key = os.getenv("GOOGLE_API_KEY", "")
-    settings = Settings()
+
+from ..core.config import settings
 
 
 def build_llm():
@@ -68,36 +57,13 @@ def build_llm():
         return google_plugin.LLM(model="gemini-2.5-flash", api_key=key)
     logger.warning("Voice LLM: LiveKit inference gateway (quota-limited)")
     return inference.LLM(model="google/gemma-4-31b-it")
-try:
-    from ..orchestrator.orchestrator import Orchestrator
-    from ..scenarios.scenario_engine import ScenarioEngine
-    from ..memory.memory_manager import MemoryManager
-    from ..events.event_system import event_system, Event
-    from ..models.event import EventType
-    from ..models.enums import Mode, SessionState
-except ImportError:
-    # Fallback when run as `python -m api.livekit_server` from backend/
-    import os
-    import sys
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    try:
-        from orchestrator.orchestrator import Orchestrator
-        from scenarios.scenario_engine import ScenarioEngine
-        from memory.memory_manager import MemoryManager
-        from events.event_system import event_system, Event
-        from models.event import EventType
-        from models.enums import Mode, SessionState
-    except ImportError:
-        # Last-resort stubs so the worker still boots for voice-only testing
-        class Orchestrator:
-            def __init__(self): self.sessions = {}
-            async def start_session(self, user_id, mode):
-                import uuid as _uuid
-                return type('S', (), {'id': str(_uuid.uuid4()), 'user_id': user_id, 'mode': mode})()
-            def get_session(self, sid): return None
-            async def select_scenario(self, session, profile):
-                return type('S', (), {'id': 's', 'opening_move': 'Hello! What skill shall we coach today?'})()
-            async def initialize_scenario(self, s, sc): pass
+
+from ..orchestrator.orchestrator import Orchestrator
+from ..scenarios.scenario_engine import ScenarioEngine
+from ..memory.memory_manager import MemoryManager
+from ..events.event_system import event_system, Event
+from ..models.event import EventType
+from ..models.enums import Mode, SessionState
             async def handle_user_turn(self, s, inp): return "Got it — tell me more."
         class ScenarioEngine: pass
         class MemoryManager:

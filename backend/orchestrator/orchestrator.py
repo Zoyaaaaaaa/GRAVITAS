@@ -6,32 +6,16 @@ try:
 except ImportError:
     AgentSession = None  # Fallback for testing without LiveKit
 
-try:
-    from ..models.enums import Mode, SessionState
-    from ..models.session import Session
-    from ..models.scenario import Scenario, ScenarioState
-    from ..models.skill_profile import SkillProfile
-    from ..agents.interview_agent import InterviewAgent
-    from ..agents.negotiation_agent import NegotiationAgent
-    from ..agents.storytelling_agent import StorytellingAgent
-    from ..agents.critical_thinking_agent import CriticalThinkingAgent
-    from ..agents.evaluator_agent import EvaluatorAgent
-    from ..agents.coach_agent import CoachAgent
-except ImportError:
-    # Fallback for standalone execution
-    import sys
-    import os
-    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from models.enums import Mode, SessionState
-    from models.session import Session
-    from models.scenario import Scenario, ScenarioState
-    from models.skill_profile import SkillProfile
-    from agents.interview_agent import InterviewAgent
-    from agents.negotiation_agent import NegotiationAgent
-    from agents.storytelling_agent import StorytellingAgent
-    from agents.critical_thinking_agent import CriticalThinkingAgent
-    from agents.evaluator_agent import EvaluatorAgent
-    from agents.coach_agent import CoachAgent
+from ..models.enums import Mode, SessionState
+from ..models.session import Session
+from ..models.scenario import Scenario, ScenarioState
+from ..models.skill_profile import SkillProfile
+from ..agents.interview_agent import InterviewAgent
+from ..agents.negotiation_agent import NegotiationAgent
+from ..agents.storytelling_agent import StorytellingAgent
+from ..agents.critical_thinking_agent import CriticalThinkingAgent
+from ..agents.evaluator_agent import EvaluatorAgent
+from ..agents.coach_agent import CoachAgent
 
 
 class Orchestrator:

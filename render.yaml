@@ -9,7 +9,7 @@ services:
     region: oregon
     plan: free
     buildCommand: pip install --upgrade pip && pip install -r backend/requirements.txt
-    startCommand: cd backend && python -m api.main
+    startCommand: python -m backend.api.main
     healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
@@ -49,7 +49,7 @@ services:
     region: oregon
     plan: free
     buildCommand: pip install --upgrade pip && pip install -r backend/requirements.txt
-    startCommand: cd backend && python -m api.livekit_server
+    startCommand: python -m backend.api.livekit_server
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
