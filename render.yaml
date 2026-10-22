@@ -79,6 +79,8 @@ services:
     plan: free
     region: oregon
     maxmemoryPolicy: allkeys-lru
+    ipAllowList:
+      - 0.0.0.0/0
 
 # Optional: Frontend on Render (alternative to Vercel)
 # - type: web
