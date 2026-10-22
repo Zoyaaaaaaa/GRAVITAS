@@ -129,7 +129,7 @@ async def health_check(request: Request):
     return {
         "status": "healthy",
         "service": "gravitas-api",
-        "database": "connected" if memory_manager.redis else "disconnected",
+        "database": "connected" if memory_manager.redis_client else "disconnected",
         "version": "1.0.0"
     }
 
