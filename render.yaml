@@ -80,7 +80,8 @@ services:
     region: oregon
     maxmemoryPolicy: allkeys-lru
     ipAllowList:
-      - 0.0.0.0/0
+      - source: 0.0.0.0/0
+        description: everywhere
 
 # Optional: Frontend on Render (alternative to Vercel)
 # - type: web
