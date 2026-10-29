@@ -3,7 +3,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
-import VoiceInterface, { TranscriptMsg } from '@/components/VoiceInterface';
 import BrowserVoice from '@/components/BrowserVoice';
 import { Mode } from '@/types';
 import { getUserId, loadSession, saveSession, clearSession, loadProfile, saveProfile, PersistedProfile } from '@/utils/sessionStore';
@@ -13,6 +12,13 @@ interface SessionPageProps {
   params: {
     mode: Mode;
   };
+}
+
+interface TranscriptMsg {
+  role: 'agent' | 'user';
+  text: string;
+  final: boolean;
+  segmentId?: string;
 }
 
 interface ChatMessage {
@@ -83,14 +89,11 @@ export default function SessionPage({ params }: SessionPageProps) {
   const [composer, setComposer] = useState('');
   const [sending, setSending] = useState(false);
   const [brief, setBrief] = useState<SessionBrief>({ objective: meta.brief, context: '', opening: '', focus: meta.focus, ready: false });
-  const [voiceState, setVoiceState] = useState<'connecting' | 'live' | 'offline'>('connecting');
   const [resumed, setResumed] = useState(false);
   const [profile, setProfile] = useState<PersistedProfile | null>(null);
-  // Quota-free fallback when the LiveKit inference gateway is 429-limited
-  const [fallbackOn, setFallbackOn] = useState(false);
-  const [showFallbackHint, setShowFallbackHint] = useState(false);
   const spokenRef = useRef<Set<string>>(new Set());
   const [, forceSpeakTick] = useState(0);
+  const voiceState = 'live'; // Always live with browser voice
 
   const userIdRef = useRef<string>('');
   const restSessionIdRef = useRef<string | null>(null);
@@ -316,7 +319,6 @@ export default function SessionPage({ params }: SessionPageProps) {
       seenSegmentsRef.current.add(msg.segmentId);
     }
     setInterim(null);
-    if (msg.role === 'agent') setVoiceState('live');
     appendMessage(msg.role, msg.text);
   }, [appendMessage]);
 
@@ -369,19 +371,18 @@ export default function SessionPage({ params }: SessionPageProps) {
     await sendText(composer);
   }, [composer, sendText]);
 
-  // Suggest the quota-free fallback if the LiveKit agent stays silent
-  const voiceStateRef = useRef(voiceState);
-  voiceStateRef.current = voiceState;
-  useEffect(() => {
-    const t = setTimeout(() => {
-      if (voiceStateRef.current !== 'live') setShowFallbackHint(true);
-    }, 25000);
-    return () => clearTimeout(t);
-  }, []);
+  // Voice state not needed with browser voice (always enabled)
+  // const voiceStateRef = useRef(voiceState);
+  // voiceStateRef.current = voiceState;
+  // useEffect(() => {
+  //   const t = setTimeout(() => {
+  //     if (voiceStateRef.current !== 'live') setShowFallbackHint(true);
+  //   }, 25000);
+  //   return () => clearTimeout(t);
+  // }, []);
 
-  // Latest unspoken agent message → vocalized once by the fallback
+  // Latest unspoken agent message → vocalized by browser voice
   const pendingSpeak = (() => {
-    if (!fallbackOn) return null;
     const last = [...messages].reverse().find((m) => m.role === 'agent' && !spokenRef.current.has(m.id));
     return last ? { id: last.id, text: last.text } : null;
   })();
@@ -421,10 +422,6 @@ export default function SessionPage({ params }: SessionPageProps) {
             )}
           </div>
           <div className="flex items-center gap-2 text-sm text-white/60 tabular-nums">
-            <span className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs tracking-widest uppercase ${voiceState === 'live' ? 'border-emerald-300/30 text-emerald-200' : 'border-[#C9A96A]/40 text-[#E8D9B8]'}`}>
-              <span className={`w-1.5 h-1.5 rounded-full ${voiceState === 'live' ? 'bg-emerald-300 animate-pulse' : 'bg-[#C9A96A] animate-pulse'}`} />
-              {voiceState === 'live' ? 'Live' : 'Connecting'}
-            </span>
             <span className="inline-flex items-center gap-1.5 text-white/50"><Clock className="w-4 h-4" />{formatTime(currentTime)}</span>
           </div>
         </motion.header>
@@ -502,19 +499,7 @@ export default function SessionPage({ params }: SessionPageProps) {
               <div className="text-xs text-white/35 font-serif italic">with your Gravitas coach</div>
             </div>
 
-            {showFallbackHint && !fallbackOn && voiceState !== 'live' && (
-              <div className="mx-6 mt-4 rounded-xl border border-[#C9A96A]/40 bg-[#C9A96A]/10 px-4 py-3 flex items-center gap-3">
-                <Headphones className="w-4 h-4 text-[#E8D9B8] flex-shrink-0" />
-                <p className="text-xs text-white/70 flex-1">Voice service is quiet (cloud quota). You can continue hands-free right now:</p>
-                <button
-                  onClick={() => { setFallbackOn(true); setShowFallbackHint(false); }}
-                  className="text-[11px] tracking-[0.2em] uppercase bg-[#C9A96A] text-[#0B0B0F] rounded-full px-4 py-1.5 hover:bg-[#E8D9B8] transition-colors flex-shrink-0"
-                >
-                  Browser voice
-                </button>
-                <button onClick={() => setShowFallbackHint(false)} className="text-white/40 hover:text-white/70 text-sm flex-shrink-0" aria-label="Dismiss">✕</button>
-              </div>
-            )}
+            {/* Browser voice is always enabled - no fallback hint needed */}
 
             <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-6 space-y-5 min-h-[380px] max-h-[520px] elegant-scroll">
               <AnimatePresence initial={false}>
@@ -573,31 +558,20 @@ export default function SessionPage({ params }: SessionPageProps) {
               )}
             </div>
 
-            {/* Quota-free browser voice strip */}
-            {fallbackOn && (
-              <BrowserVoice
-                active={isSessionActive && fallbackOn}
-                onUserText={(t) => { void sendText(t); }}
-                speak={pendingSpeak}
-                onSpoken={handleSpoken}
-              />
-            )}
+            {/* Browser voice strip - always enabled */}
+            <BrowserVoice
+              active={isSessionActive}
+              onUserText={(t) => { void sendText(t); }}
+              speak={pendingSpeak}
+              onSpoken={handleSpoken}
+            />
 
             {/* Composer */}
             <div className="border-t border-white/10 p-4 bg-black/20">
               <div className="flex items-center gap-3">
-                <button
-                  onClick={() => setFallbackOn((f) => !f)}
-                  title={fallbackOn ? 'Turn off browser voice' : 'Use browser voice (works without cloud quota)'}
-                  aria-label="Toggle browser voice"
-                  className={`w-11 h-11 rounded-full flex items-center justify-center transition-colors flex-shrink-0 ${
-                    fallbackOn
-                      ? 'bg-[#C9A96A] text-[#0B0B0F] hover:bg-[#E8D9B8]'
-                      : 'border border-white/15 text-white/50 hover:text-[#E8D9B8] hover:border-[#C9A96A]/50'
-                  }`}
-                >
+                <div className="w-11 h-11 rounded-full flex items-center justify-center bg-[#C9A96A]/20 text-[#C9A96A] flex-shrink-0">
                   <Headphones className="w-5 h-5" />
-                </button>
+                </div>
                 <input
                   value={composer}
                   onChange={(e) => setComposer(e.target.value)}
@@ -623,8 +597,8 @@ export default function SessionPage({ params }: SessionPageProps) {
         </div>
       </div>
 
-      {/* Voice controls */}
-      {isSessionActive && (
+      {/* Voice controls - disabled (using browser voice fallback instead) */}
+      {/* {isSessionActive && (
         <VoiceInterface
           isSessionActive={isSessionActive}
           onToggleMute={handleToggleMute}
@@ -632,7 +606,7 @@ export default function SessionPage({ params }: SessionPageProps) {
           mode={mode}
           onTranscript={handleTranscript}
         />
-      )}
+      )} */}
     </div>
   );
 }
