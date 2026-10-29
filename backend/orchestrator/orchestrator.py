@@ -1,6 +1,7 @@
 from typing import Dict, Any, Optional
 from enum import Enum
 import asyncio
+import uuid
 try:
     from livekit.agents import AgentSession
 except ImportError:
@@ -35,7 +36,7 @@ class Orchestrator:
     async def start_session(self, user_id: str, mode: Mode) -> Session:
         """Start a new coaching session"""
         session = Session(
-            id=f"session_{user_id}_{asyncio.get_event_loop().time()}",
+            id=f"session_{user_id}_{uuid.uuid4().hex}",
             user_id=user_id,
             mode=mode,
             state=SessionState.DISCOVERY

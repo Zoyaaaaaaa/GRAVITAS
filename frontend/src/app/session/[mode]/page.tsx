@@ -252,7 +252,12 @@ export default function SessionPage({ params }: SessionPageProps) {
         if (sid) {
           try {
             const check = await fetchJson(`${apiUrl}/session/${encodeURIComponent(sid)}`, undefined, 8000);
-            if (!check.ok) sid = null;
+            if (!check.ok) {
+              // Session doesn't exist on backend, clear it
+              sid = null;
+              restSessionIdRef.current = null;
+              clearSession(mode);
+            }
           } catch { sid = null; }
         }
         if (!sid) {
