@@ -2,7 +2,7 @@
 # Connect this repo to Render and it will auto-create all services
 
 services:
-  # Backend API (REST only - voice handled by browser)
+  # Backend API (FastAPI)
   - type: web
     name: gravitas-api
     env: python
@@ -21,6 +21,15 @@ services:
           type: redis
           name: gravitas-redis
           property: connectionString
+      - key: LIVEKIT_URL
+        sync: false
+        description: Your LiveKit server URL (e.g., wss://your-project.livekit.cloud)
+      - key: LIVEKIT_API_KEY
+        sync: false
+        description: Your LiveKit API key from project settings
+      - key: LIVEKIT_API_SECRET
+        sync: false
+        description: Your LiveKit API secret from project settings
       - key: GOOGLE_API_KEY
         sync: false
       - key: OPENAI_API_KEY
@@ -35,6 +44,40 @@ services:
         value: "0.0.0.0"
       - key: PORT
         value: "8000"
+
+  # LiveKit Voice Worker
+  - type: worker
+    name: gravitas-voice
+    env: python
+    region: oregon
+    plan: free
+    buildCommand: pip install --upgrade pip && pip install -r backend/requirements.txt
+    startCommand: python -m backend.api.livekit_server
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: gravitas-redis
+          property: connectionString
+      - key: LIVEKIT_URL
+        sync: false
+        description: Your LiveKit server URL (e.g., wss://your-project.livekit.cloud)
+      - key: LIVEKIT_API_KEY
+        sync: false
+        description: Your LiveKit API key from project settings
+      - key: LIVEKIT_API_SECRET
+        sync: false
+        description: Your LiveKit API secret from project settings
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
 
   # Redis (Free tier: 25MB)
   - type: redis

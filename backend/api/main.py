@@ -296,8 +296,58 @@ async def get_user_weaknesses(request: Request, user_id: str):
 @limiter.limit("10/minute")
 async def get_livekit_token(request: Request, user_id: str, room_name: str):
     """Generate a LiveKit access token for a user to join a room"""
-    # LiveKit disabled - using browser voice fallback instead
-    raise HTTPException(status_code=503, detail="LiveKit not configured. Use browser voice fallback instead.")
+    try:
+        from livekit.api import AccessToken, VideoGrants
+        from datetime import timedelta
+
+        # Create access token
+        token = AccessToken(settings.livekit_api_key, settings.livekit_api_secret)
+        token.with_identity(user_id)
+        token.with_name(f"User-{user_id}")
+
+        # Grant video permissions
+        grant = VideoGrants(
+            room_join=True,
+            room=room_name,
+            can_publish=True,
+            can_subscribe=True,
+        )
+        token.with_grants(grant)
+
+        # Set token expiration (1 hour)
+        token.with_ttl(timedelta(hours=1))
+
+        jwt_token = token.to_jwt()
+
+        # Explicitly dispatch the voice agent into this room.
+        # Without this, the frontend creates a random room that no worker
+        # ever joins, so the user sits alone (no STT, no TTS).
+        try:
+            from livekit.api import LiveKitAPI, CreateAgentDispatchRequest
+            api_url = settings.livekit_url.replace("wss://", "https://").replace("ws://", "http://")
+            lkapi = LiveKitAPI(url=api_url, api_key=settings.livekit_api_key, api_secret=settings.livekit_api_secret)
+            try:
+                await lkapi.agent_dispatch.create_dispatch(
+                    CreateAgentDispatchRequest(room=room_name, agent_name="GravitasVoice")
+                )
+            finally:
+                try:
+                    await lkapi.aclose()
+                except Exception:
+                    pass
+        except Exception as dispatch_err:
+            # Don't fail the token request if the voice worker is offline;
+            # log so the operator knows to start `python -m api.livekit_server`.
+            print(f"Agent dispatch failed (is livekit_server running?): {dispatch_err}")
+
+        return {
+            "token": jwt_token,
+            "room_name": room_name,
+            "user_id": user_id
+        }
+    except Exception as e:
+        logger.error("livekit_token_failed", user_id=user_id, room=room_name, error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.websocket("/ws/{session_id}")
